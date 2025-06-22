@@ -1,0 +1,466 @@
+import tkinter
+from tkinter import ttk, messagebox
+import sqlite3
+
+"""
+CRUD приложение для работы с базой данных с сортировкой и поиском
+
+Основные функции:
+
+def __init__ - инициализирует приложение, создает БД и настраивает интерфейс
+def center_window - центрирует окно на экране
+def create_db - создает структуру базы данных и добавляет тестовые данные
+def setup_ui - создает пользовательский интерфейс с кнопками и таблицей
+def switch_table - переключает между различными таблицами БД
+def load_data - загружает данные из БД в TreeView компонент
+def sort_by_column - сортирует данные в таблице по выбранной колонке
+def update_sort_headers - обновляет заголовки колонок с индикаторами сортировки
+def reset_sort - сбрасывает все настройки сортировки
+def get_selected_record - получает выбранную в таблице запись
+def create_form - создает модальное окно для ввода/редактирования данных
+def add_record - добавляет новую запись в текущую таблицу
+def delete_record - удаляет выбранную запись из таблицы
+def edit_record - редактирует выбранную запись
+def search - выполняет поиск записей по заданному критерию
+def run - запускает главный цикл приложения
+"""
+
+
+class MainApp:
+    """CRUD приложение для работы с базой данных с сортировкой и поиском"""
+
+    def __init__(self):
+        """
+        Инициализация приложения
+
+        Создает главное окно, подключается к БД, настраивает конфигурацию таблиц,
+        создает интерфейс и загружает начальные данные
+        """
+        self.root = tkinter.Tk()
+        self.root.title("Главная БД")
+        self.root.geometry("900x600")
+        self.root.configure(bg='#f0f0f0')
+        self.center_window(self.root)
+
+        self.conn = sqlite3.connect('main_db.db')
+        self.current_table = 'users'
+        self.sort_reverse = {}
+
+        # Упрощенная конфигурация с прямыми названиями колонок
+        self.table_config = {
+            'users': {
+                'columns': ['ID', 'Логин', 'Роль'],
+                'query': "SELECT * FROM users",
+                'fields': ['username', 'role'],
+                'display_fields': ['Логин', 'Роль'],
+                'search_field': 'username'
+            },
+            'categories': {
+                'columns': ['ID', 'Название', 'Описание'],
+                'query': "SELECT * FROM categories",
+                'fields': ['name', 'description'],
+                'display_fields': ['Название', 'Описание'],
+                'search_field': 'name'
+            },
+            'items': {
+                'columns': ['ID', 'ID категории', 'Название', 'Цена', 'Статус'],
+                'query': "SELECT id, category_id, name, value, status FROM items",
+                'fields': ['category_id', 'name', 'value', 'status'],
+                'display_fields': ['ID категории', 'Название', 'Цена', 'Статус'],
+                'search_field': 'name'
+            },
+            'operations': {
+                'columns': ['ID', 'ID пользователя', 'ID товара', 'Количество', 'Дата', 'Заметки'],
+                'query': "SELECT id, user_id, item_id, quantity, date, notes FROM operations",
+                'fields': ['user_id', 'item_id', 'quantity', 'date', 'notes'],
+                'display_fields': ['ID пользователя', 'ID товара', 'Количество', 'Дата', 'Заметки'],
+                'search_field': 'notes'
+            }
+        }
+
+        self.create_db()
+        self.setup_ui()
+        self.load_data()
+
+    def center_window(self, window):
+        """
+        Центрирует окно на экране
+
+        Args:
+            window: окно tkinter для центрирования
+        """
+        window.update_idletasks()
+        width = window.winfo_width()
+        height = window.winfo_height()
+        x = (window.winfo_screenwidth() // 2) - (width // 2)
+        y = (window.winfo_screenheight() // 2) - (height // 2)
+        window.geometry(f'{width}x{height}+{x}+{y}')
+
+    def create_db(self):
+        """
+        Создает структуру базы данных с внешними ключами
+
+        Создает таблицы: users, categories, items, operations
+        При первом запуске добавляет тестовые данные
+        """
+        c = self.conn.cursor()
+
+        tables_sql = [
+            '''CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                username TEXT,
+                role TEXT
+            )''',
+            '''CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                description TEXT
+            )''',
+            '''CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY,
+                category_id INTEGER,
+                name TEXT,
+                value REAL,
+                status TEXT,
+                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
+            )''',
+            '''CREATE TABLE IF NOT EXISTS operations (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER,
+                item_id INTEGER,
+                quantity INTEGER,
+                date TEXT,
+                notes TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT
+            )'''
+        ]
+
+        for sql in tables_sql:
+            c.execute(sql)
+
+        # Добавление тестовых данных при первом запуске
+        c.execute("SELECT COUNT(*) FROM categories")
+        if c.fetchone()[0] == 0:
+            test_data = {
+                'categories': [(1, 'Отдел 1', 'Описание 1'), (2, 'Отдел 2', 'Описание 2')],
+                'items': [(1, 1, 'Товар 1', 100, 'Активный'), (2, 2, 'Товар 2', 200, 'Неактивный')],
+                'operations': [(1, 1, 1, 5, '2024-01-01', 'Заметка 1'), (2, 2, 2, 3, '2024-01-02', 'Заметка 2')],
+                'users': [(1, 'admin', 'Администратор'), (2, 'user', 'Пользователь')]
+            }
+
+            for table, data in test_data.items():
+                placeholders = ','.join(['?' for _ in range(len(data[0]))])
+                c.executemany(f"INSERT INTO {table} VALUES ({placeholders})", data)
+
+        self.conn.commit()
+
+    def setup_ui(self):
+        """
+        Создает пользовательский интерфейс
+
+        Создает кнопки переключения таблиц, CRUD операций, поле поиска
+        и основную таблицу TreeView для отображения данных
+        """
+        # Кнопки переключения таблиц
+        btn_frame = tkinter.Frame(self.root, bg='#f0f0f0')
+        btn_frame.pack(pady=5)
+
+        table_buttons = [
+            ('users', 'Пользователи'), ('categories', 'Категории'),
+            ('items', 'Элементы'), ('operations', 'Операции')
+        ]
+
+        for table, text in table_buttons:
+            tkinter.Button(btn_frame, text=text,
+                           command=lambda t=table: self.switch_table(t)).pack(side=tkinter.LEFT, padx=5)
+
+        # CRUD кнопки
+        ctrl_frame = tkinter.Frame(self.root, bg='#f0f0f0')
+        ctrl_frame.pack(pady=5)
+
+        control_buttons = [
+            ('Добавить', self.add_record, 'blue'),
+            ('Удалить', self.delete_record, 'blue'),
+            ('Редактировать', self.edit_record, 'blue'),
+            ('Сбросить сортировку', self.reset_sort, '#f0f0f0')
+        ]
+
+        for text, command, color in control_buttons:
+            btn_config = {'text': text, 'command': command}
+            if color != '#f0f0f0':
+                btn_config.update({'bg': color, 'fg': 'white'})
+            tkinter.Button(ctrl_frame, **btn_config).pack(side=tkinter.LEFT, padx=5)
+
+        # Поиск
+        search_frame = tkinter.Frame(self.root, bg='#f0f0f0')
+        search_frame.pack(pady=5)
+
+        tkinter.Label(search_frame, text="Поиск:", bg='#f0f0f0').pack(side=tkinter.LEFT)
+
+        self.search_var = tkinter.StringVar()
+        self.search_var.trace('w', lambda *args: self.search())
+
+        tkinter.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tkinter.LEFT, padx=5)
+
+        # Основная таблица
+        self.tree = ttk.Treeview(self.root, show='headings')
+        self.tree.pack(fill=tkinter.BOTH, expand=True, padx=10, pady=10)
+
+    def switch_table(self, table):
+        """
+        Переключает между различными таблицами БД
+
+        Args:
+            table (str): название таблицы для отображения
+        """
+        self.current_table = table
+        self.load_data()
+
+    def load_data(self):
+        """
+        Загружает данные из БД в TreeView компонент
+
+        Очищает существующие данные, настраивает колонки согласно
+        конфигурации текущей таблицы и загружает все записи
+        """
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        config = self.table_config[self.current_table]
+        cols = config['columns']
+
+        self.tree['columns'] = cols
+
+        for col in cols:
+            self.tree.heading(col, text=col, command=lambda c=col: self.sort_by_column(c))
+            self.tree.column(col, width=120)
+
+        for row in self.conn.execute(config['query']):
+            self.tree.insert('', tkinter.END, values=row)
+
+    def sort_by_column(self, col):
+        """
+        Сортирует данные в таблице по выбранной колонке
+
+        Автоматически определяет тип данных (числовой или текстовый)
+        и применяет соответствующую сортировку с возможностью изменения направления
+
+        Args:
+            col (str): название колонки для сортировки
+        """
+        data = [(self.tree.set(item, col), item) for item in self.tree.get_children('')]
+
+        reverse = self.sort_reverse.get(col, False)
+        self.sort_reverse[col] = not reverse
+
+        def sort_key(x):
+            val = x[0]
+            if str(val).replace('.', '').replace('-', '').isdigit():
+                return (0, float(val))
+            return (1, str(val).lower())
+
+        data.sort(key=sort_key, reverse=reverse)
+
+        for i, (_, item) in enumerate(data):
+            self.tree.move(item, '', i)
+
+        self.update_sort_headers(col, reverse)
+
+    def update_sort_headers(self, sorted_col, reverse):
+        """
+        Обновляет заголовки колонок с индикаторами сортировки
+
+        Добавляет визуальные индикаторы направления сортировки
+        к заголовкам колонок (возр/убыв)
+
+        Args:
+            sorted_col (str): колонка, по которой выполнена сортировка
+            reverse (bool): направление сортировки (True - убывающая)
+        """
+        for col in self.tree['columns']:
+            clean_name = col.replace(' (возр)', '').replace(' (убыв)', '')
+
+            if col == sorted_col:
+                direction = ' (убыв)' if reverse else ' (возр)'
+                self.tree.heading(col, text=clean_name + direction)
+            else:
+                self.tree.heading(col, text=clean_name)
+
+    def reset_sort(self):
+        """
+        Сбрасывает все настройки сортировки
+
+        Удаляет индикаторы сортировки из заголовков и
+        перезагружает данные в исходном порядке
+        """
+        self.sort_reverse = {}
+
+        for col in self.tree['columns']:
+            clean_name = col.replace(' (возр)', '').replace(' (убыв)', '')
+            self.tree.heading(col, text=clean_name)
+
+        self.load_data()
+
+    def get_selected_record(self):
+        """
+        Получает выбранную в таблице запись
+
+        Returns:
+            tuple: (ID записи, список всех значений) или (None, None) если ничего не выбрано
+        """
+        selected = self.tree.selection()
+        if not selected:
+            return None, None
+
+        values = self.tree.item(selected[0])['values']
+        return values[0], values
+
+    def create_form(self, title, fields, values=None):
+        """
+        Создает модальное окно для ввода/редактирования данных
+
+        Args:
+            title (str): заголовок окна
+            fields (list): список названий полей для ввода
+            values (list, optional): значения для предзаполнения полей
+
+        Returns:
+            list: список введенных значений или None при отмене
+        """
+        window = tkinter.Toplevel(self.root)
+        window.title(title)
+        window.geometry("300x400")
+        window.transient(self.root)
+        window.grab_set()
+        self.center_window(window)
+
+        entries = {}
+        result = [None]
+
+        for i, field in enumerate(fields):
+            tkinter.Label(window, text=f"{field}:").pack(pady=5)
+
+            entry = tkinter.Entry(window, width=40)
+            if values and i < len(values):
+                entry.insert(0, str(values[i]))
+
+            entry.pack(pady=5)
+            entries[field] = entry
+
+        def save():
+            result[0] = [entries[field].get() for field in fields]
+            window.destroy()
+
+        tkinter.Button(window, text="Сохранить", command=save).pack(pady=20)
+
+        window.wait_window()
+        return result[0]
+
+    def add_record(self):
+        """
+        Добавляет новую запись в текущую таблицу
+
+        Открывает форму для ввода данных и сохраняет новую запись в БД
+        При ошибке показывает сообщение пользователю
+        """
+        config = self.table_config[self.current_table]
+        data = self.create_form("Добавить запись", config['display_fields'])
+
+        if data:
+            try:
+                fields_str = ','.join(config['fields'])
+                placeholders = ','.join(['?' for _ in data])
+                sql = f"INSERT INTO {self.current_table} ({fields_str}) VALUES ({placeholders})"
+
+                self.conn.execute(sql, data)
+                self.conn.commit()
+                self.load_data()
+
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось добавить запись: {e}")
+
+    def delete_record(self):
+        """
+        Удаляет выбранную запись из таблицы
+
+        Запрашивает подтверждение у пользователя перед удалением
+        При ошибке (например, нарушение внешних ключей) показывает сообщение
+        """
+        record_id, _ = self.get_selected_record()
+
+        if record_id is None:
+            messagebox.showwarning("Внимание", "Выберите запись для удаления")
+            return
+
+        if messagebox.askyesno("Подтверждение", "Удалить выбранную запись?"):
+            try:
+                self.conn.execute(f"DELETE FROM {self.current_table} WHERE id = ?", (record_id,))
+                self.conn.commit()
+                self.load_data()
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось удалить запись: {e}")
+
+    def edit_record(self):
+        """
+        Редактирует выбранную запись
+
+        Открывает форму с текущими значениями записи для редактирования
+        Сохраняет изменения в БД при подтверждении
+        """
+        record_id, values = self.get_selected_record()
+
+        if record_id is None:
+            messagebox.showwarning("Внимание", "Выберите запись для редактирования")
+            return
+
+        config = self.table_config[self.current_table]
+        data = self.create_form("Редактировать запись", config['display_fields'], values[1:])
+
+        if data:
+            try:
+                set_clause = ','.join([f"{field}=?" for field in config['fields']])
+                sql = f"UPDATE {self.current_table} SET {set_clause} WHERE id=?"
+
+                self.conn.execute(sql, data + [record_id])
+                self.conn.commit()
+                self.load_data()
+
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось обновить запись: {e}")
+
+    def search(self):
+        """
+        Выполняет поиск записей по заданному критерию
+
+        Фильтрует данные в таблице по основному полю поиска
+        При пустом запросе показывает все записи
+        """
+        query = self.search_var.get()
+        if not query:
+            self.load_data()
+            return
+
+        config = self.table_config[self.current_table]
+        search_field = config['search_field']
+        sql = f"{config['query']} WHERE {search_field} LIKE ?"
+
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        for row in self.conn.execute(sql, (f'%{query}%',)):
+            self.tree.insert('', tkinter.END, values=row)
+
+    def run(self):
+        """
+        Запускает главный цикл приложения
+
+        Начинает обработку событий GUI и закрывает соединение с БД при завершении
+        """
+        self.root.mainloop()
+        self.conn.close()
+
+
+if __name__ == "__main__":
+    app = MainApp()
+    app.run()
